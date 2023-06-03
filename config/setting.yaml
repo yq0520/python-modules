@@ -1,0 +1,45 @@
+---
+  # 服务名称
+  name: python-modules
+  # 启动环境
+  env: production
+  # to get a string like this run:
+  # openssl rand -hex 32
+  token_key: 3504831aaf7d9f57140a36570f6c64147edfd8dd2cae6d2b0e6e3a1434b4d794
+
+  # token 过期时间 0 永不过期
+  # 30 days = 60 * 24 * 30
+  token_expire: 0
+
+  # 最小密码长度
+  password_min_length: 8
+
+  # 默认语言
+  language: zh_CN
+
+  production:
+    db:
+      host: 192.168.50.115
+      username: postgres
+      password: P@ssw0rd
+      database: qianyou_db
+      port: 5232
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      db: 0
+      pwd: ''
+    main_path: /home/default/file/flask_api_template
+  debug:
+    db:
+      host: 192.168.50.115
+      username: postgres
+      password: P@ssw0rd
+      database: qianyou_db
+      port: 5232
+    redis:
+      host: 127.0.0.1
+      port: 6379
+      db: 0
+      pwd: ''
+    main_path: E:\file\flask_api_template
