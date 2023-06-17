@@ -8,7 +8,6 @@
 腾讯云 存储 cos 文件上传下载
 pip install cos-python-sdk-v5
 """
-
 import logging
 import os
 import re
@@ -18,8 +17,7 @@ from qcloud_cos import CosConfig
 from qcloud_cos import CosS3Client
 from qcloud_cos.cos_exception import CosClientError, CosServiceError
 from qcloud_cos.cos_threadpool import SimpleThreadPool
-
-# SDK 文档 https://cloud.tencent.com/document/product/436/12269
+from cloud.cos_temp_token import CosTempToken
 
 # 正常情况日志级别使用 INFO，需要定位时可以修改为 DEBUG，此时 SDK 会打印和服务端的通信信息
 logging.basicConfig(level=logging.INFO, stream=sys.stdout)
@@ -43,23 +41,41 @@ def cos_client():
     client = CosS3Client(config)
     :return:
     """
-    secret_id = 'xxxxx'
-    secret_key = 'xxxxx'
-    url = 'http://{bucket-appid}.cos.{region}.myqcloud.com/'
-    region = 'ap-beijing'
-    bucket = 'examplebucket-1250000000'
-
+    secret_id = '用户的 SecretId'
+    secret_key = '用户的 SecretKey'
+    region = '用户的 region'
     # 全球加速域名 {bucket-appid}.cos.{region}.myqcloud.com
-    endpoint = '{bucket-appid}.cos.accelerate.myqcloud.com'
-    config = CosConfig(Region=region, SecretId=secret_id, SecretKey=secret_key)
+    # endpoint = ''
+    endpoint = 'cos.accelerate.myqcloud.com'
+    config = CosConfig(
+        Region=region,
+        SecretId=secret_id,
+        SecretKey=secret_key,
+        Endpoint=endpoint,
+    )
     client = CosS3Client(config)
     return client
+
+
+def cos_token_client():
+    ctt = CosTempToken()
+    data = ctt.get_credential_demo()
+    if data:
+        # 1. 设置用户属性, 包括 secret_id, secret_key, region 等。Appid 已在 CosConfig 中移除，请在参数 Bucket 中带上 Appid。Bucket 由 BucketName-Appid 组成
+        tmp_secret_id = data.get('tmpSecretId')  # 临时密钥的 SecretId，临时密钥生成和使用指引参见 https://cloud.tencent.com/document/product/436/14048
+        tmp_secret_key = data.get('tmpSecretKey')  # 临时密钥的 SecretKey，临时密钥生成和使用指引参见 https://cloud.tencent.com/document/product/436/14048
+        token = data.get('sessionToken')  # 临时密钥的 Token，临时密钥生成和使用指引参见 https://cloud.tencent.com/document/product/436/14048
+        region = '用户的 region'  # 替换为用户的 region，已创建桶归属的 region 可以在控制台查看，https://console.cloud.tencent.com/cos5/bucket
+
+        config = CosConfig(Region=region, SecretId=tmp_secret_id, SecretKey=tmp_secret_key, Token=token)
+        client = CosS3Client(config)
+        return client
 
 
 class CosApi(object):
     def __init__(self, client):
         self.client = client
-        self.bucket = 'examplebucket-1250000000'
+        self.bucket = '存储桶'
 
     @staticmethod
     def key_rule(key):
@@ -119,7 +135,7 @@ class CosApi(object):
         """
         for i in range(0, 10):
             try:
-                response = self.client.upload_file(
+                self.client.upload_file(
                     Bucket=self.bucket,
                     Key=key,
                     LocalFilePath=local_file)
@@ -147,7 +163,7 @@ class CosApi(object):
                 # 判断 COS 上文件是否存在
                 exists = False
                 try:
-                    response = self.client.head_object(Bucket=self.bucket, Key=cosObjectKey)
+                    self.client.head_object(Bucket=self.bucket, Key=cosObjectKey)
                     exists = True
                 except CosServiceError as e:
                     if e.get_status_code() == 404:
@@ -172,7 +188,7 @@ class CosApi(object):
         """
         for i in range(0, 10):
             try:
-                response = self.client.download_file(
+                self.client.download_file(
                     Bucket=self.bucket,
                     Key=key,
                     DestFilePath=dest_file)
@@ -183,7 +199,7 @@ class CosApi(object):
     def list_current_dir(self, prefix, delimiter=''):
         """
         列出当前目录子节点，返回所有子节点信息
-        :param prefix: 目录节点
+        :param prefix: 目录节点 'doc/'
         :param delimiter: 如果 delimiter 设置为 "/"，则需要在程序里递归处理子目录
         :return:
         """
@@ -207,7 +223,6 @@ class CosApi(object):
                 marker = response["NextMarker"]
             else:
                 break
-
         sorted(file_info, key=lambda info: info["Key"])
         return file_info
 
@@ -283,6 +298,29 @@ class CosApi(object):
             marker = response["NextMarker"]
         return marker
 
+    def list_objects_dir(self, prefix, delimiter=''):
+        file_info = []
+        sub_dirs = []
+        marker = ""
+        count = 1
+        while True:
+            response = self.client.list_objects(self.bucket, prefix, delimiter, marker)
+            count += 1
+
+            if "CommonPrefixes" in response:
+                common_prefixes = response.get("CommonPrefixes")
+                sub_dirs.extend(common_prefixes)
+
+            if "Contents" in response:
+                contents = response.get("Contents")
+                file_info.extend(contents)
+
+            if "NextMarker" in response.keys():
+                marker = response["NextMarker"]
+            else:
+                break
+        return sub_dirs, file_info
+
     def object_exists(self, key):
         """
         检查存储桶中是否存在某个对象。
@@ -291,10 +329,18 @@ class CosApi(object):
         """
         return self.client.object_exists(self.bucket, key)
 
+    def create_dir(self, cos_dir):
+        cos_dir = self.key_rule(cos_dir)
+        if cos_dir[-1] != '/':
+            cos_dir = f'{cos_dir}/'
+        self.client.put_object(Bucket=self.bucket, Key=cos_dir, Body=b'')
+
 
 def main():
     try:
-        client = cos_client()
+        client = cos_token_client()
+        if client is None:
+            raise Exception('client is None')
         cos = CosApi(client)
         # 上传对象
         # local_file = r"D:\file\img\1.1001.jpg"
@@ -309,7 +355,16 @@ def main():
         # cos.download_file('doc/bbb/m10.ico', dest_file)
 
         # 批量下载
-        cos.download_dir_from_cos(r'D:\file\img\cos', 'doc/')
+        # cos.download_dir_from_cos(r'D:\file\img\cos', 'doc/')
+
+        dirs, files = cos.list_objects_dir('doc/', '/')
+        print(dirs)
+        print(len(dirs))
+        print(files)
+        print(len(files))
+
+        # cos.create_dir('BBE/zhaojianwei/from_MORE/')
+
         print('success')
     except Exception as ex:
         print(ex)
